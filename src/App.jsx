@@ -3,6 +3,26 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { motion, AnimatePresence } from 'framer-motion';
 import { v4 as uuidv4 } from 'uuid';
 
+// --- Utilitas Tanggal (Baru/Diperbarui) ---
+// Fungsi untuk mendapatkan tanggal hari ini dalam format YYYY-MM-DD berdasarkan waktu lokal perangkat
+const getTodayLocalISO = () => {
+    const now = new Date();
+    // Gunakan fungsi tanggal lokal untuk menghindari pergeseran ZT
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+// Fungsi untuk mengonversi ISO String (UTC/Tanpa ZT) ke tanggal YYYY-MM-DD lokal
+const getLocalISODateFromISOString = (isoString) => {
+    const date = new Date(isoString);
+    // Tambahkan offset zona waktu untuk mendapatkan tanggal lokal
+    const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+    return localDate.toISOString().slice(0, 10);
+};
+
+
 // --- Kamus Terjemahan (i18n) ---
 const translations = {
     id: {
@@ -315,14 +335,18 @@ const useNotificationScheduler = (tasks, onAlarm, t) => {
         const schedule = () => {
             const now = new Date();
             tasks.forEach(task => {
+                // Hapus timeout lama
                 if (window[`timeout_${task.id}`]) clearTimeout(window[`timeout_${task.id}`]);
+                
                 if (task.reminder > 0 && !task.completed && task.date && task.time) {
+                    // Membuat objek Date dengan zona waktu lokal
                     const taskTime = new Date(`${task.date}T${task.time}`);
                     const reminderTime = new Date(taskTime.getTime() - task.reminder * 60000);
+                    
                     if (reminderTime > now) {
                         const delay = reminderTime.getTime() - now.getTime();
                         window[`timeout_${task.id}`] = setTimeout(() => {
-                            new Notification('Fintask Reminder', { body: `"${task.title}" starts in ${task.reminder} minutes.` });
+                            new Notification('Fintask Reminder', { body: `"${task.title}" starts at ${task.time} today, in ${task.reminder} minutes.` });
                             onAlarm(task);
                         }, delay);
                     }
@@ -449,8 +473,8 @@ const MainApp = ({ currentUser, onLogout }) => {
             update: (updatedTodo) => handleUpdate('todos', data.todos.map(t => t.id === updatedTodo.id ? updatedTodo : t)),
             delete: (id) => handleUpdate('todos', data.todos.filter(t => t.id !== id)),
             toggle: (id) => {
-                 const isCompleting = !data.todos.find(t => t.id === id)?.completed;
-                handleUpdate('todos', data.todos.map(t => {
+                     const isCompleting = !data.todos.find(t => t.id === id)?.completed;
+                 handleUpdate('todos', data.todos.map(t => {
                 if (t.id === id) {
                     const isNowCompleted = !t.completed;
                     return { ...t, completed: isNowCompleted, completedAt: isNowCompleted ? new Date().toISOString() : null };
@@ -540,33 +564,41 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
         return () => clearInterval(timer);
     }, []);
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // Menggunakan utilitas waktu lokal
+    const todayStr = getTodayLocalISO();
     const canClaimStreak = streak.lastClaim !== todayStr;
 
     const handleClaimStreak = () => {
         if (!canClaimStreak) return;
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().slice(0, 10);
-        const newCount = streak.lastClaim === yesterdayStr ? streak.count + 1 : 1;
+        const yesterdayStr = getTodayLocalISO(); // Gunakan utilitas untuk menghindari ZT shift
+        yesterday.setDate(yesterday.getDate() - 1); // Mundur 1 hari lagi untuk yesterday
+        const newCount = streak.lastClaim === getTodayLocalISO() ? streak.count + 1 : 1;
         onUpdate('streak', { count: newCount, lastClaim: todayStr });
     };
     
     // PERBAIKAN: Tampilkan tugas hari ini DAN yang terlewat (belum selesai) di dashboard
     const todaysTasks = useMemo(() => {
         const now = new Date();
-        const todayDate = now.toISOString().slice(0, 10);
+        const todayDate = getTodayLocalISO();
 
         return tasks
-            .filter(t => !t.completed && (
-                t.date === todayDate || 
-                new Date(t.date + (t.time ? 'T' + t.time : '')) < now // Tugas yang terlewat (past tasks)
-            ))
+            .filter(t => {
+                if (t.completed) return false;
+
+                if (t.date === todayDate) return true;
+                
+                // Tugas yang terlewat (past tasks) - bandingkan tanggalnya saja
+                return t.date && t.date < todayDate;
+            })
             .sort((a, b) => {
-                const timeA = a.time ? a.time : '23:59'; // Jika tidak ada waktu, taruh di akhir hari
-                const timeB = b.time ? b.time : '23:59';
+                // Prioritas waktu: Hari ini dengan waktu > Hari ini tanpa waktu > Terlewat
+                const timeA = a.time || '23:59';
+                const timeB = b.time || '23:59';
                 const dateA = a.date + 'T' + timeA;
                 const dateB = b.date + 'T' + timeB;
+                // Menggunakan objek Date untuk perbandingan yang lebih akurat (walaupun mungkin perlu sedikit penyesuaian untuk perbandingan hari yang berbeda)
                 return new Date(dateA) - new Date(dateB);
             });
     }, [tasks, currentTime]);
@@ -575,7 +607,7 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
         const completed = tasks.filter(t => t.completed).length;
         const total = tasks.length;
         // Hanya hitung selesai HARI INI
-        const todaysDone = tasks.filter(t => t.completed && t.date === todayStr).length; 
+        const todaysDone = tasks.filter(t => t.completed && t.date === todayStr).length;
         return { total, completed, pending: total - completed, completionRate: total > 0 ? Math.round((completed / total) * 100) : 0, todaysDone };
     }, [tasks, todayStr]);
 
@@ -631,7 +663,7 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
 
                 {/* Catatan Konfirmasi untuk Dashboard */}
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 rounded-lg text-sm mb-4">
-                    <p>Setelah selesai, pastikan **Tandai Selesai** di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis **Checklist Tugas** di bawah!</p>
+                    <p>Setelah selesai, pastikan 'Tandai Selesai'di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis 'Checklist Tugas' di bawah!</p>
                 </div>
 
                 {todaysTasks.length > 0 ? (
@@ -748,9 +780,13 @@ const FinancePage = ({ finance, handlers, t }) => {
         const netBalance = totals.income - (totals.expense + totals.savings + totals.investment);
 
         const trendData = finance.transactions.reduce((acc, t) => {
-            const month = new Date(t.date).toLocaleString('default', { month: 'short', year: '2-digit' });
+            // Gunakan getLocalISODateFromISOString untuk memastikan tanggal lokal yang konsisten
+            const localDate = getLocalISODateFromISOString(t.date); 
+            const dateObj = new Date(localDate);
+            const month = dateObj.toLocaleDateString('default', { month: 'short', year: '2-digit' });
+
             if (!acc[month]) {
-                acc[month] = { name: month, income: 0, expense: 0, date: new Date(t.date) };
+                acc[month] = { name: month, income: 0, expense: 0, date: dateObj };
             }
             if (t.type === 'income') acc[month].income += t.amount;
             if (t.type === 'expense') acc[month].expense += t.amount;
@@ -772,8 +808,8 @@ const FinancePage = ({ finance, handlers, t }) => {
                 <div className="space-y-2 text-sm">
                     <div className="flex justify-between"><span>{t('finance_total_income')}</span><span className="font-semibold text-green-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.income || 0)}</span></div>
                     <div className="flex justify-between"><span>{t('finance_total_expense')}</span><span className="font-semibold text-red-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.expense || 0)}</span></div>
-                     <div className="flex justify-between"><span>{t('finance_total_savings')}</span><span className="font-semibold text-blue-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.savings || 0)}</span></div>
-                     <div className="flex justify-between"><span>{t('finance_total_investment')}</span><span className="font-semibold text-purple-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.investment || 0)}</span></div>
+                    <div className="flex justify-between"><span>{t('finance_total_savings')}</span><span className="font-semibold text-blue-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.savings || 0)}</span></div>
+                    <div className="flex justify-between"><span>{t('finance_total_investment')}</span><span className="font-semibold text-purple-500">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.investment || 0)}</span></div>
                     <div className="flex justify-between border-t border-gray-200 dark:border-gray-700 pt-2 mt-2 font-bold"><span>{t('finance_net_balance')}</span><span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(financialSummary.netBalance || 0)}</span></div>
                 </div>
             </div>
@@ -808,7 +844,7 @@ const FinancePage = ({ finance, handlers, t }) => {
                             </div>
                         )}
                         <div className="md:col-span-2">
-                             <label className="text-sm font-medium">{t('finance_upload_proof')}</label>
+                            <label className="text-sm font-medium">{t('finance_upload_proof')}</label>
                             <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full text-sm mt-1 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20" />
                         </div>
                     </div>
@@ -994,17 +1030,22 @@ const ScheduleItem = ({ task, onEditTask, onDeleteTask, onToggleChecklistItem, o
     let isCompletable = true; // Default: Jika tidak ada durasi/waktu, selalu dapat diselesaikan
 
     if (isTimedTask) {
+        // Gabungkan tanggal (local) dan waktu (local)
         const taskStart = new Date(`${task.date}T${task.time}`);
         const taskEnd = new Date(taskStart.getTime() + task.duration * 60000);
         
         isCompletable = now >= taskEnd; // Hanya bisa selesai setelah durasi berakhir
+    } else if (task.time) {
+        // Jika hanya ada tanggal/waktu tanpa durasi
+        const taskStart = new Date(`${task.date}T${task.time}`);
+        isCompletable = now >= taskStart; 
     } else if (task.date) {
-        // Jika hanya ada tanggal/waktu tanpa durasi, bisa selesai kapan saja setelah waktu mulai
-        const taskStart = new Date(`${task.date}${task.time ? 'T' + task.time : ''}`);
+        // Jika hanya ada tanggal, bisa selesai kapan saja setelah tanggal itu dimulai
+        const taskStart = new Date(task.date + 'T00:00:00'); 
         isCompletable = now >= taskStart; 
     }
-    
-    const isPast = task.date && new Date(`${task.date}${task.time ? 'T' + task.time : ''}`) < now;
+
+    const isPast = task.date && new Date(task.date + (task.time ? 'T' + task.time : 'T23:59:59')) < now;
     const isOngoing = isTimedTask && now >= new Date(`${task.date}T${task.time}`) && !isCompletable;
     const progressPercentage = isOngoing ? Math.min(100, ((now - new Date(`${task.date}T${task.time}`)) / (task.duration * 60000)) * 100) : 0;
     
@@ -1018,7 +1059,7 @@ const ScheduleItem = ({ task, onEditTask, onDeleteTask, onToggleChecklistItem, o
         }
         // Jika sudah lewat tapi belum selesai, anggap terlewat/merah
         if (isPast && !isOngoing) {
-             return <div className="w-4 h-4 rounded-full bg-red-100 dark:bg-red-900/40 border-2 border-red-400 dark:border-red-600"></div>;
+            return <div className="w-4 h-4 rounded-full bg-red-100 dark:bg-red-900/40 border-2 border-red-400 dark:border-red-600"></div>;
         }
         if (isOngoing) {
             return <div className="w-4 h-4 rounded-full bg-blue-500 relative flex items-center justify-center"><div className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></div><IconClock className="w-3 h-3 text-white" /></div>;
@@ -1027,7 +1068,8 @@ const ScheduleItem = ({ task, onEditTask, onDeleteTask, onToggleChecklistItem, o
         return <div className="w-4 h-4 rounded-full bg-white dark:bg-gray-600 border-2 border-gray-300 dark:border-gray-500"></div>;
     };
 
-    const isButtonDisabled = !isCompleted && !isCompletable;
+    // Tombol hanya dinonaktifkan jika task timed dan belum selesai
+    const isButtonDisabled = isTimedTask && !isCompleted && !isCompletable; 
 
     return (
         <div className="relative mb-4">
@@ -1038,8 +1080,8 @@ const ScheduleItem = ({ task, onEditTask, onDeleteTask, onToggleChecklistItem, o
                     {/* Header: Waktu, Kategori, Durasi. Tampilkan tanggal jika bukan hari ini */}
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
-                             {task.date && task.date !== new Date().toISOString().slice(0, 10) ? `${task.date} • ` : ''}
-                             {task.time ? task.time : 'Sepanjang Hari'}
+                               {task.date && task.date !== getTodayLocalISO() ? `${task.date} • ` : ''}
+                               {task.time ? task.time : 'Sepanjang Hari'}
                         </span>
                         <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${categoryStyle.tag}`}>{task.category}</span>
                         {task.duration > 0 && <span className="text-sm text-gray-500 dark:text-gray-400">• {task.duration} min</span>}
@@ -1106,7 +1148,7 @@ const ActivityPage = ({ tasks, todos, handlers, onEditTask, t }) => {
     const [activeTab, setActiveTab] = useState('todos');
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getTodayLocalISO();
     const missedTasks = useMemo(() => tasks.filter(t => t.date < todayStr && !t.completed), [tasks, todayStr]);
     const scheduledTasks = useMemo(() => tasks.filter(t => t.date >= todayStr).sort((a, b) => {
         // Sortir berdasarkan tanggal, lalu waktu
@@ -1147,7 +1189,7 @@ const ActivityPage = ({ tasks, todos, handlers, onEditTask, t }) => {
             <AnimatePresence mode="wait">
                 {activeTab === 'todos' ? <TodoListView key="todos" todos={todos} handlers={handlers} viewMode={viewMode} t={t} />
                     : activeTab === 'scheduled' ? <ScheduledListView key="scheduled" tasks={scheduledTasks} handlers={handlers.tasks} onEditTask={onEditTask} t={t} /> 
-                        : <MissedListView key="missed" tasks={missedTasks} handlers={handlers} t={t} />}
+                    : <MissedListView key="missed" tasks={missedTasks} handlers={handlers} t={t} />}
             </AnimatePresence>
         </motion.div>
     );
@@ -1168,12 +1210,15 @@ const ScheduledTaskItem = ({ task, handlers, onEditTask, t }) => {
     } else if (task.time) {
         const taskStart = new Date(`${task.date}T${task.time}`);
         isCompletable = now >= taskStart; 
+    } else if (task.date) {
+        const taskStart = new Date(task.date + 'T00:00:00');
+        isCompletable = now >= taskStart;
     }
     
     // Check jika semua checklist selesai (untuk sinkronisasi tampilan)
     const allChecklistCompleted = task.checklist && task.checklist.length > 0 && task.checklist.every(item => item.completed);
     const isCompleted = task.completed || allChecklistCompleted;
-    const isButtonDisabled = !isCompleted && !isCompletable;
+    const isButtonDisabled = isTimedTask && !isCompleted && !isCompletable;
 
 
     return (
@@ -1261,10 +1306,10 @@ const TodoListView = ({ todos, handlers, viewMode, t }) => {
                     {todo.checklist && todo.checklist.length > 0 && (
                         <div className="mt-2 space-y-1">
                             {todo.checklist.map(item => (
-                                     <div key={item.id} className="flex items-center gap-2 text-sm">
-                                         <input type="checkbox" readOnly checked={item.completed} className="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary bg-transparent pointer-events-none" />
-                                         <span className={item.completed ? 'line-through' : ''}>{item.content}</span>
-                                     </div>
+                                           <div key={item.id} className="flex items-center gap-2 text-sm">
+                                               <input type="checkbox" readOnly checked={item.completed} className="form-checkbox h-4 w-4 rounded text-primary focus:ring-primary bg-transparent pointer-events-none" />
+                                               <span className={item.completed ? 'line-through' : ''}>{item.content}</span>
+                                           </div>
                             ))}
                         </div>
                     )}
@@ -1278,11 +1323,11 @@ const TodoListView = ({ todos, handlers, viewMode, t }) => {
     );
 
     const renderGrid = (list) => (
-           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence>
             {list.map(todo => (
                      <motion.div key={todo.id} layout initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}
-                        className={`p-4 rounded-lg flex flex-col ${todo.completed ? 'bg-gray-100 dark:bg-gray-800' : 'bg-yellow-100 dark:bg-yellow-900/50'}`}
+                         className={`p-4 rounded-lg flex flex-col ${todo.completed ? 'bg-gray-100 dark:bg-gray-800' : 'bg-yellow-100 dark:bg-yellow-900/50'}`}
                     >
                         <div className="flex justify-between items-start mb-2">
                             <p className={`font-semibold flex-grow break-words ${todo.completed ? 'line-through text-gray-500' : ''}`}>{todo.content}</p>
@@ -1308,7 +1353,7 @@ const TodoListView = ({ todos, handlers, viewMode, t }) => {
                         </div>
                     </motion.div>
             ))}
-             </AnimatePresence>
+            </AnimatePresence>
         </div>
     );
 
@@ -1331,11 +1376,11 @@ const TodoListView = ({ todos, handlers, viewMode, t }) => {
                      </motion.div>
             ) : (
                 <motion.div key="grid-view">
-                     <h3 className="font-semibold mb-2">{t('todos_active')} ({pending.length})</h3>
-                     {pending.length === 0 ? <p className="text-gray-500 text-sm mb-4">{t('todos_empty')}</p> : renderGrid(pending)}
+                    <h3 className="font-semibold mb-2">{t('todos_active')} ({pending.length})</h3>
+                    {pending.length === 0 ? <p className="text-gray-500 text-sm mb-4">{t('todos_empty')}</p> : renderGrid(pending)}
 
-                     <h3 className="font-semibold mt-6 mb-2">{t('todos_completed')} ({completed.length})</h3>
-                     {completed.length > 0 && renderGrid(completed)}
+                    <h3 className="font-semibold mt-6 mb-2">{t('todos_completed')} ({completed.length})</h3>
+                    {completed.length > 0 && renderGrid(completed)}
                 </motion.div>
             )}
             </AnimatePresence>
@@ -1475,7 +1520,7 @@ const StatsPage = ({ tasks, todos, t }) => {
         }));
     }, [tasks]);
     
-    // PERBAIKAN: Memastikan perhitungan statistik menggunakan data yang relevan dengan timeframe
+    // PERBAIKAN: Memastikan perhitungan statistik menggunakan data yang relevan dengan timeframe dan waktu lokal
     const { taskTrendData, todoTrendData } = useMemo(() => {
         const days = timeframe === 'week' ? 7 : timeframe === 'month' ? 30 : 365;
         const endDate = new Date();
@@ -1485,7 +1530,12 @@ const StatsPage = ({ tasks, todos, t }) => {
 
         const dateMap = new Map();
         for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateString = d.toISOString().slice(0, 10);
+            // Gunakan format ISO lokal untuk memastikan keselarasan
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const dateString = `${year}-${month}-${day}`;
+            
             let label;
             if (days === 7) label = d.toLocaleDateString('default', { weekday: 'short' });
             else if (days === 30) label = d.getDate().toString();
@@ -1493,8 +1543,11 @@ const StatsPage = ({ tasks, todos, t }) => {
             dateMap.set(dateString, { name: label, Total: 0, Completed: 0, TodosCompleted: 0, date: new Date(d) });
         }
         
-        // Filter tasks and todos to only include those within the current timeframe
-        const filterDate = new Date(startDate).toISOString().slice(0, 10);
+        // Tentukan filterDate (YYYY-MM-DD) berdasarkan startDate
+        const filterYear = startDate.getFullYear();
+        const filterMonth = String(startDate.getMonth() + 1).padStart(2, '0');
+        const filterDay = String(startDate.getDate()).padStart(2, '0');
+        const filterDate = `${filterYear}-${filterMonth}-${filterDay}`;
 
         tasks.filter(t => t.date >= filterDate).forEach(task => {
             if (dateMap.has(task.date)) {
@@ -1505,31 +1558,42 @@ const StatsPage = ({ tasks, todos, t }) => {
             }
         });
 
-        todos.filter(t => t.completed && t.completedAt && t.completedAt.slice(0, 10) >= filterDate).forEach(todo => {
-            const completedDateStr = todo.completedAt.slice(0, 10);
-            if (dateMap.has(completedDateStr)) {
-                 dateMap.get(completedDateStr).TodosCompleted++;
+        todos.filter(t => t.completed && t.completedAt).forEach(todo => {
+            const completedDateLocal = getLocalISODateFromISOString(todo.completedAt);
+            if (completedDateLocal >= filterDate && dateMap.has(completedDateLocal)) {
+                dateMap.get(completedDateLocal).TodosCompleted++;
             }
         });
 
         if (days === 365) {
             const monthMap = new Map();
+            const monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const categories = ['Work', 'Study', 'Personal', 'Health'];
+
              for (const item of Array.from(dateMap.values())) {
                  const monthName = item.date.toLocaleDateString('default', { month: 'short' });
-                 if (!monthMap.has(monthName)) {
-                     const initialMonthData = { name: monthName, Total: 0, Completed: 0, TodosCompleted: 0, sortDate: item.date };
-                     monthMap.set(monthName, initialMonthData);
+                 
+                 // Hanya tambahkan data jika item berada dalam rentang bulan yang ditampilkan
+                 if (monthOrder.includes(monthName)) {
+                     if (!monthMap.has(monthName)) {
+                         const initialMonthData = { name: monthName, Total: 0, Completed: 0, TodosCompleted: 0, sortIndex: monthOrder.indexOf(monthName) };
+                         monthMap.set(monthName, initialMonthData);
+                     }
+                     const monthData = monthMap.get(monthName);
+                     monthData.Total += item.Total;
+                     monthData.Completed += item.Completed;
+                     monthData.TodosCompleted += item.TodosCompleted;
                  }
-                 const monthData = monthMap.get(monthName);
-                 monthData.Total += item.Total;
-                 monthData.Completed += item.Completed;
-                 monthData.TodosCompleted += item.TodosCompleted;
              }
-             const monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-             const sortedMonths = Array.from(monthMap.values()).sort((a,b) => monthOrder.indexOf(a.name) - monthOrder.indexOf(b.name));
-             return { taskTrendData: sortedMonths, todoTrendData: sortedMonths.map(m => ({name: m.name, Completed: m.TodosCompleted})) };
-        }
 
+             // Sortir berdasarkan urutan bulan yang benar (sortIndex)
+             const sortedMonths = Array.from(monthMap.values()).sort((a,b) => a.sortIndex - b.sortIndex);
+             
+             return { 
+                 taskTrendData: sortedMonths, 
+                 todoTrendData: sortedMonths.map(m => ({name: m.name, Completed: m.TodosCompleted})) 
+             };
+        }
 
         const trendData = Array.from(dateMap.values());
         
@@ -1568,7 +1632,7 @@ const StatsPage = ({ tasks, todos, t }) => {
             </div>
 
             <div className="p-4 bg-light-card dark:bg-dark-card rounded-lg">
-                 <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold">{t('stats_task_trend')}</h2>
                     <div className="flex gap-2">
                         <TimeframeButton value="week" label={t('stats_week')} />
@@ -1592,9 +1656,9 @@ const StatsPage = ({ tasks, todos, t }) => {
             </div>
             
             <div className="p-4 bg-light-card dark:bg-dark-card rounded-lg">
-                 <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold">{t('stats_todo_trend')}</h2>
-                 </div>
+                    </div>
                 <div style={{ width: '100%', height: 300 }}>
                     <ResponsiveContainer>
                         <BarChart data={todoTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
@@ -1621,7 +1685,7 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `fintask_backup_${username}_${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `fintask_backup_${username}_${getTodayLocalISO()}.json`; // Gunakan utilitas lokal
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -1673,15 +1737,15 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
                         </div>
                     </div>
                 </a>
-                 <div className="w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
-                     <div className="flex items-center gap-4">
-                        <IconDatabase className="w-6 h-6 text-primary"/>
-                        <div>
-                            <p className="font-semibold">{t('settings_data_storage')}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings_data_storage_description')}</p>
+                    <div className="w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
+                        <div className="flex items-center gap-4">
+                            <IconDatabase className="w-6 h-6 text-primary"/>
+                            <div>
+                                <p className="font-semibold">{t('settings_data_storage')}</p>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings_data_storage_description')}</p>
+                            </div>
                         </div>
                     </div>
-                </div>
                 {/* --- Akhir Bagian Baru --- */}
 
 
@@ -1737,8 +1801,8 @@ const TaskModal = ({ isOpen, onClose, onSave, editingTask, t }) => {
             setTitle(task.title || ''); 
             setDescription(task.description || ''); 
             setCategory(task.category || 'Personal'); 
-            // PERBAIKAN: Gunakan tanggal saat ini sebagai default jika menambahkan baru
-            setDate(task.date || now.toISOString().slice(0, 10)); 
+            // PERBAIKAN: Gunakan tanggal lokal saat ini sebagai default jika menambahkan baru
+            setDate(task.date || getTodayLocalISO()); 
             // PERBAIKAN: Set time/duration default ke empty string/0
             setTime(task.time || ''); 
             setDuration(task.duration || 0); 
@@ -1904,39 +1968,39 @@ const FinancialSummaryCard = ({ finance, t }) => {
                 <div className="flex flex-col flex-grow space-y-4">
                     {/* Grafik Batang Arus Kas & Ringkasan Teks */}
                     <div>
-                         <h4 className="font-semibold text-sm text-center mb-2">{t('finance_cash_flow')}</h4>
+                        <h4 className="font-semibold text-sm text-center mb-2">{t('finance_cash_flow')}</h4>
                          <div style={{ width: '100%', height: 100 }}>
                               <ResponsiveContainer>
-                                 <BarChart data={flowData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(128, 128, 128, 0.2)" />
-                                     <XAxis type="number" hide />
-                                     <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
-                                     <Tooltip
-                                         formatter={(value) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value)}
-                                         contentStyle={{ backgroundColor: 'rgba(31, 41, 55, 0.8)', border: 'none', borderRadius: '0.5rem' }}
-                                         labelStyle={{ color: '#F9FAFB' }}
-                                     />
-                                     <Bar dataKey="value" barSize={20}>
-                                         {flowData.map((entry, index) => (
-                                             <Cell key={`cell-${index}`} fill={flowColors[index % 20]} />
-                                         ))}
-                                     </Bar>
-                                    </BarChart>
+                                  <BarChart data={flowData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(128, 128, 128, 0.2)" />
+                                       <XAxis type="number" hide />
+                                       <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                                       <Tooltip
+                                            formatter={(value) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(value)}
+                                            contentStyle={{ backgroundColor: 'rgba(31, 41, 55, 0.8)', border: 'none', borderRadius: '0.5rem' }}
+                                            labelStyle={{ color: '#F9FAFB' }}
+                                        />
+                                       <Bar dataKey="value" barSize={20}>
+                                            {flowData.map((entry, index) => (
+                                                 <Cell key={`cell-${index}`} fill={flowColors[index % 20]} />
+                                            ))}
+                                       </Bar>
+                                   </BarChart>
                               </ResponsiveContainer>
                           </div>
                           {/* Ringkasan Dana di sini */}
                           <div className="mt-4 space-y-2 text-sm">
                                <div className="flex justify-between p-2 rounded bg-green-50 dark:bg-green-900/50">
-                                   <span>{t('finance_total_income')}</span>
-                                   <span className="font-semibold text-green-600 dark:text-green-400">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.income)}</span>
+                                       <span>{t('finance_total_income')}</span>
+                                       <span className="font-semibold text-green-600 dark:text-green-400">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.income)}</span>
                                </div>
                                <div className="flex justify-between p-2 rounded bg-red-50 dark:bg-red-900/50">
-                                   <span>{t('finance_total_outflow')}</span>
-                                   <span className="font-semibold text-red-600 dark:text-red-400">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.expense + totals.savings + totals.investment)}</span>
+                                       <span>{t('finance_total_outflow')}</span>
+                                       <span className="font-semibold text-red-600 dark:text-red-400">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.expense + totals.savings + totals.investment)}</span>
                                </div>
                                <div className="flex justify-between p-2 rounded bg-gray-100 dark:bg-gray-700/50 font-bold border-t-2 border-gray-200 dark:border-gray-600">
-                                   <span>{t('finance_net_balance')}</span>
-                                   <span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.netBalance)}</span>
+                                       <span>{t('finance_net_balance')}</span>
+                                       <span>{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totals.netBalance)}</span>
                                </div>
                           </div>
                     </div>
@@ -2002,25 +2066,35 @@ const ActivitySummaryCard = ({ tasks, t }) => {
         startDate.setDate(endDate.getDate() - days + 1);
         startDate.setHours(0, 0, 0, 0);
 
-
         const categories = ['Work', 'Study', 'Personal', 'Health'];
         const dateMap = new Map();
 
         for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateString = d.toISOString().slice(0, 10);
+            // Gunakan format ISO lokal untuk memastikan keselarasan
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const dateString = `${year}-${month}-${day}`;
+            
             let label;
-            if (days === 7) label = d.toLocaleDateString('en-US', { weekday: 'short' });
+            // Menggunakan 'default' locale untuk nama hari/bulan agar universal
+            if (days === 7) label = d.toLocaleDateString('default', { weekday: 'short' });
             else if (days === 30) label = d.getDate().toString();
-            else label = d.toLocaleDateString('en-US', { month: 'short' });
+            else label = d.toLocaleDateString('default', { month: 'short' });
 
             const initialData = { name: label, date: new Date(d) };
             categories.forEach(cat => initialData[cat] = 0);
             dateMap.set(dateString, initialData);
         }
 
-        const filterDate = new Date(startDate).toISOString().slice(0, 10);
+        // Tentukan filterDate (YYYY-MM-DD) berdasarkan startDate
+        const filterYear = startDate.getFullYear();
+        const filterMonth = String(startDate.getMonth() + 1).padStart(2, '0');
+        const filterDay = String(startDate.getDate()).padStart(2, '0');
+        const filterDate = `${filterYear}-${filterMonth}-${filterDay}`;
         
         tasks.filter(t => t.completed && t.date >= filterDate).forEach(task => {
+            // task.date sudah dalam YYYY-MM-DD
             if (dateMap.has(task.date)) {
                 const dayData = dateMap.get(task.date);
                 if(dayData[task.category] !== undefined) {
@@ -2031,17 +2105,24 @@ const ActivitySummaryCard = ({ tasks, t }) => {
         
         if (days === 365) {
             const monthMap = new Map();
+            const monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            
             for (const dayData of dateMap.values()) {
-                const monthName = dayData.date.toLocaleDateString('en-US', { month: 'short' });
-                if (!monthMap.has(monthName)) {
-                    const initialMonthData = { name: monthName, date: dayData.date };
-                     categories.forEach(cat => initialMonthData[cat] = 0);
-                    monthMap.set(monthName, initialMonthData);
+                // Gunakan toLocaleDateString untuk nama bulan
+                const monthName = dayData.date.toLocaleDateString('default', { month: 'short' });
+                
+                if (monthOrder.includes(monthName)) {
+                    if (!monthMap.has(monthName)) {
+                        const initialMonthData = { name: monthName, date: dayData.date, sortIndex: monthOrder.indexOf(monthName) };
+                        categories.forEach(cat => initialMonthData[cat] = 0);
+                        monthMap.set(monthName, initialMonthData);
+                    }
+                    const monthData = monthMap.get(monthName);
+                    categories.forEach(cat => monthData[cat] += dayData[cat]);
                 }
-                const monthData = monthMap.get(monthName);
-                categories.forEach(cat => monthData[cat] += dayData[cat]);
             }
-             return Array.from(monthMap.values()).sort((a,b) => a.date - b.date);
+            // Sortir bulan
+            return Array.from(monthMap.values()).sort((a,b) => a.sortIndex - b.sortIndex);
         }
 
         return Array.from(dateMap.values()).sort((a,b) => a.date - b.date);
