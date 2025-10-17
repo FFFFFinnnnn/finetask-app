@@ -7,7 +7,6 @@ import { v4 as uuidv4 } from 'uuid';
 // Fungsi untuk mendapatkan tanggal hari ini dalam format YYYY-MM-DD berdasarkan waktu lokal perangkat
 const getTodayLocalISO = () => {
     const now = new Date();
-    // Gunakan fungsi tanggal lokal untuk menghindari pergeseran ZT
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -17,11 +16,19 @@ const getTodayLocalISO = () => {
 // Fungsi untuk mengonversi ISO String (UTC/Tanpa ZT) ke tanggal YYYY-MM-DD lokal
 const getLocalISODateFromISOString = (isoString) => {
     const date = new Date(isoString);
-    // Tambahkan offset zona waktu untuk mendapatkan tanggal lokal
     const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
     return localDate.toISOString().slice(0, 10);
 };
 
+// Fungsi untuk mendapatkan tanggal kemarin dalam format YYYY-MM-DD
+const getYesterdayLocalISO = () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const year = yesterday.getFullYear();
+    const month = String(yesterday.getMonth() + 1).padStart(2, '0');
+    const day = String(yesterday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 // --- Kamus Terjemahan (i18n) ---
 const translations = {
@@ -566,17 +573,32 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
 
     // Menggunakan utilitas waktu lokal
     const todayStr = getTodayLocalISO();
+    const yesterdayStr = getYesterdayLocalISO();
+
+    // Pastikan tombol claim dinonaktifkan jika sudah diklaim hari ini
     const canClaimStreak = streak.lastClaim !== todayStr;
 
+    // >>>>>>>>>>>>>>>>> PERBAIKAN LOGIKA DAY STREAK <<<<<<<<<<<<<<<<<
     const handleClaimStreak = () => {
         if (!canClaimStreak) return;
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = getTodayLocalISO(); // Gunakan utilitas untuk menghindari ZT shift
-        yesterday.setDate(yesterday.getDate() - 1); // Mundur 1 hari lagi untuk yesterday
-        const newCount = streak.lastClaim === getTodayLocalISO() ? streak.count + 1 : 1;
+
+        const lastClaimDate = streak.lastClaim;
+        let newCount;
+
+        if (lastClaimDate === yesterdayStr) {
+            // Klaim dilakukan tepat satu hari setelah klaim terakhir
+            newCount = streak.count + 1;
+        } else if (lastClaimDate === todayStr) {
+            // Sudah diklaim hari ini (seharusnya dicegah oleh canClaimStreak, tapi ini safety check)
+            newCount = streak.count;
+        } else {
+            // Klaim terputus (terlewat lebih dari satu hari) atau ini adalah klaim pertama
+            newCount = 1;
+        }
+
         onUpdate('streak', { count: newCount, lastClaim: todayStr });
     };
+    // >>>>>>>>>>>>>>>>> AKHIR PERBAIKAN LOGIKA DAY STREAK <<<<<<<<<<<<<<<<<
     
     // PERBAIKAN: Tampilkan tugas hari ini DAN yang terlewat (belum selesai) di dashboard
     const todaysTasks = useMemo(() => {
@@ -663,7 +685,7 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
 
                 {/* Catatan Konfirmasi untuk Dashboard */}
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 rounded-lg text-sm mb-4">
-                    <p>Setelah selesai, pastikan 'Tandai Selesai'di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis 'Checklist Tugas' di bawah!</p>
+                    <p>Setelah selesai, pastikan **Tandai Selesai** di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis **Checklist Tugas** di bawah!</p>
                 </div>
 
                 {todaysTasks.length > 0 ? (
@@ -780,7 +802,6 @@ const FinancePage = ({ finance, handlers, t }) => {
         const netBalance = totals.income - (totals.expense + totals.savings + totals.investment);
 
         const trendData = finance.transactions.reduce((acc, t) => {
-            // Gunakan getLocalISODateFromISOString untuk memastikan tanggal lokal yang konsisten
             const localDate = getLocalISODateFromISOString(t.date); 
             const dateObj = new Date(localDate);
             const month = dateObj.toLocaleDateString('default', { month: 'short', year: '2-digit' });
@@ -1568,8 +1589,7 @@ const StatsPage = ({ tasks, todos, t }) => {
         if (days === 365) {
             const monthMap = new Map();
             const monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-            const categories = ['Work', 'Study', 'Personal', 'Health'];
-
+            
              for (const item of Array.from(dateMap.values())) {
                  const monthName = item.date.toLocaleDateString('default', { month: 'short' });
                  
