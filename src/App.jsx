@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { v4 as uuidv4 } from 'uuid';
+import GradientBlinds from './GradientBlinds';
 
 // --- Utilitas Tanggal (Baru/Diperbarui) ---
 // Fungsi untuk mendapatkan tanggal hari ini dalam format YYYY-MM-DD berdasarkan waktu lokal perangkat
@@ -118,7 +119,7 @@ const translations = {
         settings_feedback_description: "Punya saran atau menemukan bug? Beri tahu kami!",
         settings_data_storage: "Penyimpanan Data Anda",
         settings_data_storage_description: "Semua data Anda disimpan aman di browser pada perangkat ini. Tidak ada data yang dikirim ke server online.",
-        auth_title: "Fintask",
+        auth_title: "Finetask",
         auth_subtitle: "Masukkan nama pengguna untuk memulai.",
         auth_placeholder: "Contoh: Budi",
         auth_error: "Nama pengguna minimal 3 karakter.",
@@ -142,6 +143,10 @@ const translations = {
         dashboard_activity_title: "Statistik Aktivitas",
         dashboard_finance_title: "Ringkasan Finansial",
         scheduled_completion_note: "Untuk kegiatan terjadwal di tab ini, pastikan untuk menandai aktivitas sebagai 'selesai' di sini agar datanya tercatat dengan benar di statistik Anda. Tombol 'Tandai Selesai' ada di bawah setiap tugas.",
+        settings_notifications: "Notifikasi",
+        settings_alarm_sound: "Pengaturan Notifikaasi",
+        settings_enabled: "Aktif",
+        settings_disabled: "Nonaktif",
     },
     en: {
         greeting_morning: "Good Morning,",
@@ -229,7 +234,7 @@ const translations = {
         settings_feedback_description: "Have a suggestion or found a bug? Let us know!",
         settings_data_storage: "Your Data Storage",
         settings_data_storage_description: "All your data is stored securely in the browser on this device. No data is sent to any online server.",
-        auth_title: "Fintask",
+        auth_title: "Finetask",
         auth_subtitle: "Enter your username to get started.",
         auth_placeholder: "Example: John",
         auth_error: "Username must be at least 3 characters.",
@@ -253,6 +258,10 @@ const translations = {
         dashboard_activity_title: "Activity Statistics",
         dashboard_finance_title: "Financial Summary",
         scheduled_completion_note: "For scheduled activities in this tab, be sure to mark the activity as 'complete' here so your data is correctly recorded in your dashboard statistics. The 'Mark Complete' button is below each task.",
+        settings_notifications: "Notifications",
+        settings_alarm_sound: "Setting Notification",
+        settings_enabled: "Enabled",
+        settings_disabled: "Disabled",
     }
 };
 
@@ -298,11 +307,12 @@ const useUserData = (username) => {
         streak: { count: 0, lastClaim: null },
         theme: 'light',
         language: 'id',
+        settings: { alarmSoundEnabled: true },
     });
 
     const [data, setData] = useState(() => {
         try {
-            const rawData = localStorage.getItem(`fintask_data_${username}`);
+            const rawData = localStorage.getItem(`finetask_data_${username}`);
             const parsedData = rawData ? JSON.parse(rawData) : getInitialData();
             return { ...getInitialData(), ...parsedData };
         } catch (error) {
@@ -313,7 +323,7 @@ const useUserData = (username) => {
 
     useEffect(() => {
         try {
-            localStorage.setItem(`fintask_data_${username}`, JSON.stringify(data));
+            localStorage.setItem(`finetask_data_${username}`, JSON.stringify(data));
         } catch (error) {
             console.error("Failed to save data to localStorage", error);
         }
@@ -332,6 +342,7 @@ const useUserData = (username) => {
 };
 
 // --- Hook untuk Notifikasi & Alarm ---
+// --- Hook untuk Notifikasi & Alarm (DIPERBAIKI) ---
 const useNotificationScheduler = (tasks, onAlarm, t) => {
     useEffect(() => {
         if (!("Notification" in window)) {
@@ -340,44 +351,83 @@ const useNotificationScheduler = (tasks, onAlarm, t) => {
         }
 
         const schedule = () => {
-            const now = new Date();
+            const now = new Date(); // Pindahkan definisi 'now' ke sini agar konsisten
+            
             tasks.forEach(task => {
                 // Hapus timeout lama
-                if (window[`timeout_${task.id}`]) clearTimeout(window[`timeout_${task.id}`]);
+                if (window[`timeout_${task.id}`]) {
+                    clearTimeout(window[`timeout_${task.id}`]);
+                }
                 
+                // Hanya proses jika ada reminder, belum selesai, ada tanggal DAN WAKTU
                 if (task.reminder > 0 && !task.completed && task.date && task.time) {
-                    // Membuat objek Date dengan zona waktu lokal
-                    const taskTime = new Date(`${task.date}T${task.time}`);
-                    const reminderTime = new Date(taskTime.getTime() - task.reminder * 60000);
                     
-                    if (reminderTime > now) {
-                        const delay = reminderTime.getTime() - now.getTime();
-                        window[`timeout_${task.id}`] = setTimeout(() => {
-                            new Notification('Fintask Reminder', { body: `"${task.title}" starts at ${task.time} today, in ${task.reminder} minutes.` });
-                            onAlarm(task);
-                        }, delay);
+                    // Membuat objek Date dengan zona waktu lokal
+                    const taskTimeString = `${task.date}T${task.time}`;
+                    const taskTime = new Date(taskTimeString);
+
+                    // **** PERBAIKAN UTAMA: Cek apakah taskTime valid ****
+                    if (!isNaN(taskTime.getTime())) { 
+                        const reminderTime = new Date(taskTime.getTime() - task.reminder * 60000);
+                        
+                        // Bandingkan dengan 'now' yang sudah didefinisikan di awal 'schedule'
+                        if (reminderTime > now) {
+                            const delay = reminderTime.getTime() - now.getTime();
+                            
+                            // Pastikan delay adalah angka positif yang valid
+                            if (delay > 0 && isFinite(delay)) {
+                                window[`timeout_${task.id}`] = setTimeout(() => {
+                                    // Cek izin lagi sebelum mengirim notifikasi (best practice)
+                                    if (Notification.permission === "granted") {
+                                         new Notification('Finetask Reminder', { 
+                                             body: `"${task.title}" starts at ${task.time}, in ${task.reminder} minutes.`,
+                                             // Optional: Tambahkan ikon atau tag jika perlu
+                                             // icon: '/path/to/icon.png', 
+                                             // tag: task.id // Mencegah notif duplikat jika alarm terpicu cepat
+                                         });
+                                    }
+                                    onAlarm(task); // Tetap panggil alarm modal internal
+                                }, delay);
+                            } else {
+                                console.warn(`Skipping reminder for task "${task.title}" due to invalid delay: ${delay}`);
+                            }
+                        }
+                    } else {
+                        // Jika tanggal tidak valid (misalnya karena format waktu salah), log warning
+                         console.warn(`Skipping reminder for task "${task.title}" due to invalid date/time string: ${taskTimeString}`);
                     }
                 }
             });
         };
 
+        // Meminta izin jika diperlukan
         if (Notification.permission === "granted") {
             schedule();
         } else if (Notification.permission !== "denied") {
-            Notification.requestPermission().then(p => { if (p === "granted") schedule(); });
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") {
+                    schedule();
+                }
+            });
         }
 
+        // Cleanup: Hapus semua timeout saat komponen unmount atau tasks berubah
         const timeoutIds = tasks.map(task => window[`timeout_${task.id}`]);
-        return () => timeoutIds.forEach(id => clearTimeout(id));
-    }, [tasks, onAlarm, t]);
+        return () => {
+            timeoutIds.forEach(id => {
+                if (id) clearTimeout(id);
+            });
+        };
+
+    }, [tasks, onAlarm, t]); // Pastikan dependensi sudah benar
 };
 
 // --- Komponen Utama ---
 export default function App() {
-    const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('fintask_currentUser'));
+    const [currentUser, setCurrentUser] = useState(() => localStorage.getItem('finetask_currentUser'));
     if (!currentUser) return <AuthScreen onLogin={setCurrentUser} />;
     return <MainApp currentUser={currentUser} onLogout={() => {
-        localStorage.removeItem('fintask_currentUser');
+        localStorage.removeItem('finetask_currentUser');
         setCurrentUser(null);
     }} />;
 }
@@ -389,40 +439,65 @@ const AuthScreen = ({ onLogin }) => {
 
     const handleLogin = () => {
         if (username.trim().length >= 3) {
-            localStorage.setItem('fintask_currentUser', username);
+            localStorage.setItem('finetask_currentUser', username);
             onLogin(username);
         }
     };
 
     return (
-        <div className="min-h-screen bg-gray-900 overflow-hidden relative flex flex-col items-center justify-center p-4">
-            <div className="absolute w-96 h-96 bg-purple-500 rounded-full -top-32 -left-32 mix-blend-lighten filter blur-3xl opacity-50 animate-blob"></div>
-            <div className="absolute w-96 h-96 bg-blue-500 rounded-full -bottom-32 -right-32 mix-blend-lighten filter blur-3xl opacity-50 animate-blob animation-delay-2000"></div>
-            <div className="absolute w-72 h-72 bg-pink-500 rounded-full -bottom-16 left-16 mix-blend-lighten filter blur-3xl opacity-50 animate-blob animation-delay-4000"></div>
-            <style>{`
-                @keyframes blob {
-                    0% { transform: translate(0px, 0px) scale(1); }
-                    33% { transform: translate(30px, -50px) scale(1.1); }
-                    66% { transform: translate(-20px, 20px) scale(0.9); }
-                    100% { transform: translate(0px, 0px) scale(1); }
-                }
-                .animate-blob { animation: blob 7s infinite; }
-                .animation-delay-2000 { animation-delay: 2s; }
-                .animation-delay-4000 { animation-delay: 4s; }
-            `}</style>
-
-            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-sm text-center bg-white/10 backdrop-blur-lg p-8 rounded-2xl border border-white/20">
+        <div className="min-h-screen bg-[#111111] overflow-hidden relative flex flex-col items-center justify-center p-4">
+            
+            {/* Animated GradientBlinds Background */}
+            <div className="absolute inset-0 z-0">
+              <GradientBlinds
+                gradientColors={['#5227FF', '#FF9FFC']}
+                angle={45}
+                noise={0.1}
+                blindCount={10}
+                blindMinWidth={60}
+                spotlightRadius={0.7}
+                spotlightSoftness={0.8}
+                spotlightOpacity={0.5}
+                mouseDampening={0.1}
+                distortAmount={0.05}
+                shineDirection="right"
+                mixBlendMode="soft-light" // 'soft-light' or 'overlay' often looks better on dark backgrounds
+              />
+            </div>
+            
+            {/* Login Form Content */}
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }} 
+              animate={{ opacity: 1, y: 0 }} 
+              className="relative z-10 w-full max-w-sm text-center bg-black/30 backdrop-blur-md p-8 rounded-2xl border border-white/10 shadow-2xl">
+                
                 <div className="absolute top-4 right-4">
-                    <select onChange={(e) => setLang(e.target.value)} value={lang} className="bg-transparent text-white/70 text-sm">
+                    <select onChange={(e) => setLang(e.target.value)} value={lang} className="bg-transparent text-white/70 text-sm focus:outline-none">
                         <option value="id" style={{ color: 'black' }}>ID</option>
                         <option value="en" style={{ color: 'black' }}>EN</option>
                     </select>
                 </div>
+
                 <h1 className="text-4xl font-bold font-heading text-white mb-2">{t('auth_title')}</h1>
-                <p className="text-gray-300 mb-8">{t('auth_subtitle')}</p>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t('auth_placeholder')} className="w-full p-3 mb-4 rounded-lg bg-white/20 text-white placeholder-gray-300 border-2 border-transparent focus:border-white/50 outline-none" />
-                <button onClick={handleLogin} className="w-full bg-white/90 text-gray-900 py-3 rounded-lg font-semibold hover:bg-white disabled:bg-gray-400 disabled:text-gray-600" disabled={username.trim().length < 3}>{t('auth_button')}</button>
-                <p className="text-xs text-white/50 mt-8">made by !-SAK24</p>
+                <p className="text-gray-200 mb-8">{t('auth_subtitle')}</p>
+                
+                <input 
+                  type="text" 
+                  value={username} 
+                  onChange={(e) => setUsername(e.target.value)} 
+                  placeholder={t('auth_placeholder')} 
+                  className="w-full p-3 mb-4 rounded-lg bg-white/10 text-white placeholder-gray-400 border-2 border-transparent focus:border-white/30 outline-none transition-colors" 
+                />
+                
+                <button 
+                  onClick={handleLogin} 
+                  className="w-full bg-white/90 text-gray-900 py-3 rounded-lg font-semibold hover:bg-white disabled:bg-gray-500/50 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors" 
+                  disabled={username.trim().length < 3}
+                >
+                    {t('auth_button')}
+                </button>
+
+                <p className="text-xs text-white/40 mt-8">made by !-SAK24</p>
             </motion.div>
         </div>
     );
@@ -430,7 +505,8 @@ const AuthScreen = ({ onLogin }) => {
 
 const MainApp = ({ currentUser, onLogout }) => {
     const [data, updateData, resetData, restoreData] = useUserData(currentUser);
-    const { tasks, todos, notes, finance, theme, language } = data;
+    // ▼▼▼ PERBAIKAN ADA DI BARIS INI ▼▼▼
+    const { tasks, todos, notes, finance, theme, language, settings } = data;
     const t = (key) => translations[language]?.[key] || key;
 
     const [alarmTask, setAlarmTask] = useState(null);
@@ -466,7 +542,6 @@ const MainApp = ({ currentUser, onLogout }) => {
                         const newChecklist = task.checklist.map(item =>
                             item.id === checklistItemId ? { ...item, completed: !item.completed } : item
                         );
-                        // Optional: Tandai tugas selesai jika semua checklist selesai
                         const allCompleted = newChecklist.length > 0 && newChecklist.every(item => item.completed);
                         return { ...task, checklist: newChecklist, completed: allCompleted ? true : task.completed };
                     }
@@ -480,17 +555,17 @@ const MainApp = ({ currentUser, onLogout }) => {
             update: (updatedTodo) => handleUpdate('todos', data.todos.map(t => t.id === updatedTodo.id ? updatedTodo : t)),
             delete: (id) => handleUpdate('todos', data.todos.filter(t => t.id !== id)),
             toggle: (id) => {
-                     const isCompleting = !data.todos.find(t => t.id === id)?.completed;
-                 handleUpdate('todos', data.todos.map(t => {
-                if (t.id === id) {
-                    const isNowCompleted = !t.completed;
-                    return { ...t, completed: isNowCompleted, completedAt: isNowCompleted ? new Date().toISOString() : null };
+                const isCompleting = !data.todos.find(t => t.id === id)?.completed;
+                handleUpdate('todos', data.todos.map(t => {
+                    if (t.id === id) {
+                        const isNowCompleted = !t.completed;
+                        return { ...t, completed: isNowCompleted, completedAt: isNowCompleted ? new Date().toISOString() : null };
+                    }
+                    return t;
+                }));
+                if (isCompleting) {
+                    showToast("To-do selesai!");
                 }
-                return t;
-            }));
-            if (isCompleting) {
-                showToast("To-do selesai!");
-            }
             },
         },
         notes: {
@@ -517,7 +592,7 @@ const MainApp = ({ currentUser, onLogout }) => {
             case 'stats':
                 return <StatsPage key="stats" tasks={tasks} todos={todos} t={t} />;
             case 'settings':
-                return <SettingsPage key="settings" onLogout={onLogout} onResetData={resetData} onRestoreData={restoreData} onUpdate={handleUpdate} lang={language} username={currentUser} t={t} />;
+                return <SettingsPage key="settings" onLogout={onLogout} onResetData={resetData} onRestoreData={restoreData} onUpdate={handleUpdate} lang={language} username={currentUser} settings={settings} t={t} />;
             default:
                 return <HomePage key="home" data={data} onUpdate={handleUpdate} onAddTaskClick={openAddModal} crudHandlers={crudHandlers} onEditTask={openEditModal} t={t} />;
         }
@@ -533,7 +608,9 @@ const MainApp = ({ currentUser, onLogout }) => {
             </main>
             <BottomNav activePage={activePage} onNavigate={setActivePage} t={t} />
             <TaskModal isOpen={isTaskModalOpen} onClose={() => { setIsTaskModalOpen(false); setEditingTask(null); }} onSave={(taskData) => { editingTask ? crudHandlers.tasks.update({ ...editingTask, ...taskData }) : crudHandlers.tasks.add(taskData); setIsTaskModalOpen(false); }} editingTask={editingTask} t={t} />
-            <AlarmModal task={alarmTask} onClose={() => setAlarmTask(null)} t={t} />
+            
+            <AlarmModal task={alarmTask} onClose={() => setAlarmTask(null)} t={t} isSoundEnabled={settings?.alarmSoundEnabled} />
+
             <Toast message={toastMessage} isVisible={!!toastMessage} onDismiss={() => setToastMessage('')} />
         </div>
     );
@@ -685,7 +762,7 @@ const HomePage = ({ data, onUpdate, onAddTaskClick, crudHandlers, onEditTask, t 
 
                 {/* Catatan Konfirmasi untuk Dashboard */}
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/50 text-blue-800 dark:text-blue-300 rounded-lg text-sm mb-4">
-                    <p>Setelah selesai, pastikan **Tandai Selesai** di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis **Checklist Tugas** di bawah!</p>
+                    <p>Setelah selesai, pastikan 'Tandai Selesai' di bawah untuk memperbarui statistik Anda. Anda juga bisa mengeceklis 'Checklist Tugas' di bawah!</p>
                 </div>
 
                 {todaysTasks.length > 0 ? (
@@ -1697,18 +1774,20 @@ const StatsPage = ({ tasks, todos, t }) => {
     );
 };
 
-const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, username, t }) => {
+const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, username, settings, t }) => {
     const handleReset = () => { if (window.confirm(t('settings_reset_confirm'))) onResetData(); };
+    
     const handleBackup = () => {
-        const data = localStorage.getItem(`fintask_data_${username}`);
+        const data = localStorage.getItem(`finetask_data_${username}`);
         const blob = new Blob([data], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `fintask_backup_${username}_${getTodayLocalISO()}.json`; // Gunakan utilitas lokal
+        a.download = `finetask_backup_${username}_${getTodayLocalISO()}.json`;
         a.click();
         URL.revokeObjectURL(url);
     };
+
     const handleRestore = (e) => {
         const file = e.target.files[0];
         if (file && window.confirm(t('settings_restore_confirm'))) {
@@ -1726,6 +1805,13 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
         }
     };
 
+    const toggleAlarmSound = () => {
+        onUpdate('settings', {
+            ...settings,
+            alarmSoundEnabled: !settings.alarmSoundEnabled,
+        });
+    };
+
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
             <h2 className="text-xl font-bold mb-4">{t('settings_title')}</h2>
@@ -1737,6 +1823,17 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
                         <button onClick={() => onUpdate('language', 'en')} className={`px-4 py-2 rounded-lg ${lang === 'en' ? 'bg-primary text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>English</button>
                     </div>
                 </div>
+
+                <div className="p-4 bg-light-card dark:bg-dark-card rounded-lg">
+                    <label className="font-semibold block mb-2">{t('settings_notifications')}</label>
+                    <div className="flex items-center justify-between">
+                        <p>{t('settings_alarm_sound')}</p>
+                        <button onClick={toggleAlarmSound} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${settings?.alarmSoundEnabled ? 'bg-green-500 text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>
+                           {settings?.alarmSoundEnabled ? t('settings_enabled') : t('settings_disabled')}
+                        </button>
+                    </div>
+                </div>
+
                 <div className="p-4 bg-light-card dark:bg-dark-card rounded-lg">
                     <label className="font-semibold block mb-2">{t('settings_data_management')}</label>
                     <div className="flex flex-col sm:flex-row gap-2 mt-2">
@@ -1747,8 +1844,7 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
                     </div>
                 </div>
 
-                {/* --- Bagian Baru: Feedback & Info Data --- */}
-                <a href="mailto:Alvienkho12@gmail.com?subject=Feedback for Fintask App" className="block w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
+                <a href="mailto:Alvienkho12@gmail.com?subject=Feedback for Finetask App" className="block w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
                     <div className="flex items-center gap-4">
                         <IconMail className="w-6 h-6 text-primary"/>
                         <div>
@@ -1757,17 +1853,15 @@ const SettingsPage = ({ onLogout, onResetData, onRestoreData, onUpdate, lang, us
                         </div>
                     </div>
                 </a>
-                    <div className="w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
-                        <div className="flex items-center gap-4">
-                            <IconDatabase className="w-6 h-6 text-primary"/>
-                            <div>
-                                <p className="font-semibold">{t('settings_data_storage')}</p>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings_data_storage_description')}</p>
-                            </div>
+                <div className="w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg">
+                    <div className="flex items-center gap-4">
+                        <IconDatabase className="w-6 h-6 text-primary"/>
+                        <div>
+                            <p className="font-semibold">{t('settings_data_storage')}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings_data_storage_description')}</p>
                         </div>
                     </div>
-                {/* --- Akhir Bagian Baru --- */}
-
+                </div>
 
                 <button onClick={handleReset} className="w-full text-left p-4 bg-red-50 text-red-700 dark:bg-red-900/50 dark:text-red-300 rounded-lg font-semibold">{t('settings_reset_data')}</button>
                 <button onClick={onLogout} className="w-full text-left p-4 bg-light-card dark:bg-dark-card rounded-lg font-semibold flex items-center gap-2">
@@ -1893,7 +1987,10 @@ const TaskModal = ({ isOpen, onClose, onSave, editingTask, t }) => {
                                 <div>
                                     <label className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('modal_field_reminder')}</label>
                                     <select value={reminder} onChange={e => setReminder(e.target.value)} className="w-full p-2 rounded-lg bg-light-bg dark:bg-dark-bg mt-1">
-                                        <option value="0">{t('modal_reminder_none')}</option><option value="5">{t('modal_reminder_5min')}</option><option value="10">{t('modal_reminder_10min')}</option><option value="30">{t('modal_reminder_30min')}</option>
+                                        <option value="0">{t('modal_reminder_none')}</option>
+                                        <option value="5">{t('modal_reminder_5min')}</option>
+                                        <option value="10">{t('modal_reminder_10min')}</option>
+                                        <option value="30">{t('modal_reminder_30min')}</option>
                                     </select>
                                 </div>
                             )}
@@ -1907,27 +2004,34 @@ const TaskModal = ({ isOpen, onClose, onSave, editingTask, t }) => {
     );
 };
 
-const AlarmModal = ({ task, onClose, t }) => {
+const AlarmModal = ({ task, onClose, t, isSoundEnabled }) => {
     useEffect(() => {
-        if (task) {
+        // Efek hanya berjalan jika ada 'task' dan 'isSoundEnabled' bernilai true
+        if (task && isSoundEnabled) {
             try {
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const oscillator = audioContext.createOscillator();
                 const gainNode = audioContext.createGain();
+                
                 oscillator.connect(gainNode);
                 gainNode.connect(audioContext.destination);
+                
                 oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime); 
                 gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
                 gainNode.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 1);
+                
                 oscillator.start(audioContext.currentTime);
                 oscillator.stop(audioContext.currentTime + 1);
             } catch (e) {
                 console.error("Failed to play alarm sound:", e);
             }
         }
-    }, [task]);
+    // Tambahkan isSoundEnabled sebagai dependensi
+    }, [task, isSoundEnabled]);
+
     if (!task) return null;
+    
     return (
         <AnimatePresence>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
